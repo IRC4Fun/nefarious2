@@ -147,7 +147,7 @@ Compatibility: This is a Nefarious extension, ircd and Undernet ircu do
 
 R - Client Has Authenticated Using SASL or LOC
 Syntax: <id> R <account>
-Example 5 F dave
+Example 5 R dave
 States: REGISTER
 Next State: -
 Comments: Indicates that a client has authenticated using SASL or LOC and has
@@ -488,8 +488,9 @@ Comments: Sets the specified markdata for the specified marktype on
   the specified client. Currently available mark types are WEBIRC,
   GEOIP, CVERSION, SSLCLIFP, KILL and MARK. GEOIP requires both a 2
   letter country code and a 2 letter continent code both without
-  the : prefix. MARK is a simple single word tag that is added to a
-  list so you can add several MARK marks on a user.
+  the : prefix and an optional country name prefixed by a :. MARK
+  is a simple single word tag that is added to a list so you can
+  add several MARK marks on a user.
 Compatibility: This is a Nefarious extension, ircd and Undernet ircu do
   not support this message.
 

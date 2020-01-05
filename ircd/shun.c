@@ -218,7 +218,7 @@ do_shun(struct Client *cptr, struct Client *sptr, struct Shun *shun)
             continue;
         Debug((DEBUG_DEBUG,"Matched!"));
       } else { /* Host/IP shun */
-        if (cli_user(acptr)->username &&
+        if (*(cli_user(acptr)->username) &&
             match(shun->sh_user, (cli_user(acptr))->username) != 0)
           continue;
 
@@ -229,7 +229,8 @@ do_shun(struct Client *cptr, struct Client *sptr, struct Shun *shun)
             continue;
         }
         else {
-          if (match(shun->sh_host, cli_sockhost(acptr)) != 0)
+          if ((match(shun->sh_host, cli_sockhost(acptr)) != 0) &&
+              (match(shun->sh_host, ircd_ntoa(&cli_ip(acptr))) != 0))
             continue;
         }
       }
@@ -1011,7 +1012,8 @@ shun_lookup(struct Client *cptr, unsigned int flags)
           continue;
       }
       else {
-        if (match(shun->sh_host, (cli_user(cptr))->realhost) != 0)
+        if ((match(shun->sh_host, (cli_user(cptr))->realhost) != 0) &&
+            (match(shun->sh_host, cli_sock_ip(cptr)) != 0))
           continue;
       }
     }

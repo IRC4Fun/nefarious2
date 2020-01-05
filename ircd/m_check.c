@@ -429,21 +429,31 @@ void checkClient(struct Client *sptr, struct Client *acptr)
    }
 
    if (IsService(cli_user(acptr)->server)) {
-     if (acptr)
-       send_reply(sptr, RPL_DATASTR, "         Status:: Network Service");
-     else if (IsAnOper(acptr))
-       send_reply(sptr, RPL_DATASTR, "         Status:: IRC Operator (service)");
-     else 
-       send_reply(sptr, RPL_DATASTR, "         Status:: Client (service)");
+     send_reply(sptr, RPL_DATASTR, "         Status:: Network Service");
    } else if (IsAdmin(acptr)) {
      send_reply(sptr, RPL_DATASTR, "         Status:: IRC Administrator");
-   } else if (IsAnOper(acptr)) {
+   } else if (IsOper(acptr)) {
      send_reply(sptr, RPL_DATASTR, "         Status:: IRC Operator");
+   } else if (IsLocOp(acptr)) {
+     send_reply(sptr, RPL_DATASTR, "         Status:: Local IRC Operator");
    } else {
      send_reply(sptr, RPL_DATASTR, "         Status:: Client");
    }
 
    if (MyUser(acptr)) {
+     if (IsAnOper(acptr)) {
+       if (IsOperedLocal(acptr)) {
+         if (cli_user(acptr)->opername) {
+           ircd_snprintf(0, outbuf, sizeof(outbuf), "         Opered:: Local O:Line as %s", cli_user(acptr)->opername);
+           send_reply(sptr, RPL_DATASTR, outbuf);
+         } else
+           send_reply(sptr, RPL_DATASTR, "         Opered:: Local O:Line");
+       } else if (IsOperedRemote(acptr))
+         send_reply(sptr, RPL_DATASTR, "         Opered:: Remote O:Line");
+       else
+         send_reply(sptr, RPL_DATASTR, "         Opered:: By Remote Server");
+     }
+
      ircd_snprintf(0, outbuf, sizeof(outbuf), "          Class:: %s", get_client_class(acptr));
      send_reply(sptr, RPL_DATASTR, outbuf);
    }
@@ -563,7 +573,7 @@ void checkClient(struct Client *sptr, struct Client *acptr)
             *(chntext + len++) = '@';
          if (HasVoice(lp))
             *(chntext + len++) = '+';
-         if (IsOper(sptr) && !ShowChannel(sptr,chptr))
+         if (!ShowChannel(sptr,chptr) || (IsNoChan(acptr) && (acptr != sptr)))
             *(chntext + len++) = '*';
          if (IsZombie(lp))
             *(chntext + len++) = '!';
@@ -638,7 +648,10 @@ void checkServer(struct Client *sptr, struct Client *acptr)
    send_reply(sptr, RPL_DATASTR, outbuf);
 
    ircd_snprintf(0, outbuf, sizeof(outbuf), "    Server name:: %s", acptr->cli_name);
-   send_reply(sptr, RPL_DATASTR,  outbuf);
+   send_reply(sptr, RPL_DATASTR, outbuf);
+
+   if (IsServerNoop(acptr))
+     send_reply(sptr, RPL_DATASTR, "           NOOP:: Server is NOOP'ed");
 
    if (cli_sslclifp(acptr) && (strlen(cli_sslclifp(acptr)) > 0)) {
      ircd_snprintf(0, outbuf, sizeof(outbuf), "SSL Fingerprint:: %s", cli_sslclifp(acptr));

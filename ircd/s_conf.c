@@ -174,6 +174,7 @@ void free_conf(struct ConfItem *aconf)
   MyFree(aconf->redirserver);
   MyFree(aconf->autojoinchan);
   MyFree(aconf->autojoinnotice);
+  MyFree(aconf->swhois);
   MyFree(aconf);
   --GlobalConfCount;
 }
@@ -1327,6 +1328,14 @@ int rehash(struct Client *cptr, int sig)
   attach_conf_uworld(&me);
 
   geoip_init();
+
+  /* If I am still NOOP'ed, mark all O:Lines as illegal */
+  if (IsServerNoop(&me)) {
+    for(tmp2 = GlobalConfList; tmp2; tmp2 = tmp2->next) {
+      if (tmp2->status & CONF_OPERATOR)
+        tmp2->status |= CONF_ILLEGAL;
+    }
+  }
 
   auth_send_event("rehash", NULL);
 

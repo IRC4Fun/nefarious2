@@ -1,5 +1,5 @@
 /*
- * IRC - Internet Relay Chat, ircd/m_version.c
+ * IRC - Internet Relay Chat, ircd/m_tempshun.c
  * Copyright (C) 1990 Jarkko Oikarinen and
  *                    University of Oulu, Computing Center
  *
@@ -20,7 +20,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
- * $Id: m_version.c 1803 2007-05-20 13:02:51Z entrope $
+ * $Id: m_tempshun.c 1271 2004-12-11 05:14:07Z klmitch $
  */
 
 /*
@@ -85,114 +85,141 @@
 #include "hash.h"
 #include "ircd.h"
 #include "ircd_features.h"
-#include "ircd_geoip.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
-#include "ircd_snprintf.h"
-#include "ircd_string.h"
-#include "match.h"
 #include "msg.h"
 #include "numeric.h"
 #include "numnicks.h"
-#include "s_debug.h"
-#include "s_user.h"
 #include "send.h"
-#include "supported.h"
-#include "version.h"
-
-#ifdef USE_SSL
-#include "openssl/ssl.h"
-#endif
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 
 /*
- * m_version - generic message handler
+ * ms_tempshun - server message handler
  *
- *   parv[0] = sender prefix
- *   parv[1] = servername
+ * parv[0]      = sender prefix
+ * parv[1]      = +/-
+ * parv[2]      = victim numeric
+ * parv[parc-1] = comment
  */
-int m_version(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+int ms_tempshun(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 {
-  if (parc > 1 && match(parv[1], cli_name(&me)))
+  struct Client* acptr;
+  char* reason = "no reason";
+  int remove = 0;
+
+  assert(0 != cptr);
+  assert(0 != sptr);
+  assert(IsServer(cptr));
+
+  if (parc < 3) {
+    protocol_violation(sptr, "Too few arguments for TEMPSHUN");
+    return need_more_params(sptr, "TEMPSHUN");
+  }
+
+  if (parv[1][0] == '-')
+    remove = -1;
+
+  if (parc > 3)
+    reason = parv[parc-1];
+
+  if (!(acptr = findNUser(parv[2])))
+    return 0;
+
+  if (MyUser(acptr)) {
+    if (remove) {
+      if (IsTempShun(acptr)) {
+        /* let the ops know about it */
+        sendto_opmask_butone_global(&me, SNO_GLINE, "Temporary shun removed from %s (%s)",
+                                    get_client_name(acptr, SHOW_IP), reason);
+      }
+      ClearTempShun(acptr);
+    } else {
+      if (!IsTempShun(acptr)) {
+        if (!feature_bool(FEAT_HIS_SHUN_REASON)) {
+          sendcmdto_one(&me, CMD_NOTICE, acptr, "%C :You are shunned: %s",
+                        acptr, reason);
+        }
+
+        /* let the ops know about it */
+        sendto_opmask_butone_global(&me, SNO_GLINE, "Temporary shun applied to %s (%s)",
+                                    get_client_name(acptr, SHOW_IP), reason);
+      }
+
+      SetTempShun(acptr);
+    }
+  } else {
+    sendcmdto_serv_butone(sptr, CMD_TEMPSHUN, cptr, "%c %C :%s",
+                          (remove ? '-' : '+'), acptr, reason);
+  }
+
+  return 0;
+}
+
+/*
+ * mo_tempshun - tempshun message handler
+ *
+ * parv[0]      = sender prefix
+ * parv[1]      = [+/-]victim
+ * parv[parc-1] = comment
+ */
+int mo_tempshun(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+{
+  struct Client* acptr;
+  char* name;
+  char* reason = "no reason";
+  int remove = 0;
+
+  assert(0 != cptr);
+  assert(0 != sptr);
+  assert(cptr == sptr);
+  assert(IsAnOper(sptr));
+
+  if (!HasPriv(sptr, PRIV_TEMPSHUN))
     return send_reply(sptr, ERR_NOPRIVILEGES);
 
-  send_reply(sptr, RPL_VERSION, version, cvs_version, debugmode, cli_name(&me),
-             debug_serveropts());
-  send_supported(sptr);
-  return 0;
-}
+  if (parc < 2)
+    return need_more_params(sptr, "TEMPSHUN");
 
-/*
- * mo_version - oper message handler
- *
- *   parv[0] = sender prefix
- *   parv[1] = servername
- */
-int mo_version(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
-{
-  struct Client *acptr;
+  if (parc > 3)
+    reason = parv[parc-1];
 
-  if (MyConnect(sptr) && parc > 1)
-  {
-    if (!(acptr = find_match_server(parv[1])))
-    {
-      send_reply(sptr, ERR_NOSUCHSERVER, parv[1]);
-      return 0;
+  if (parv[1][0] == '-') {
+    name = parv[1]+1;
+    remove = -1;
+  } else if (parv[1][0] == '+') {
+    name = parv[1]+1;
+  } else
+    name = parv[1];
+
+  if (!(acptr = FindUser(name)))
+    return send_reply(sptr, ERR_NOSUCHNICK, name);
+
+  if (MyUser(acptr)) {
+    if (remove) {
+      if (IsTempShun(acptr)) {
+        /* let the ops know about it */
+        sendto_opmask_butone_global(&me, SNO_GLINE, "Temporary shun removed from %s (%s)",
+                                    get_client_name(acptr, SHOW_IP), parv[parc-1]);
+      }
+      ClearTempShun(acptr);
+    } else {
+      if (!IsTempShun(acptr)) {
+        if (!feature_bool(FEAT_HIS_SHUN_REASON)) {
+          sendcmdto_one(&me, CMD_NOTICE, acptr, "%C :You are shunned: %s",
+                        acptr, reason);
+        }
+
+        /* let the ops know about it */
+        sendto_opmask_butone_global(&me, SNO_GLINE, "Temporary shun applied to %s (%s)",
+                                    get_client_name(acptr, SHOW_IP), reason);
+      }
+
+      SetTempShun(acptr);
     }
-    parv[1] = cli_name(acptr);
-  }
-
-  if (hunt_server_cmd(sptr, CMD_VERSION, cptr, feature_int(FEAT_HIS_REMOTE),
-                                                           ":%C", 1,
-                                                           parc, parv)
-                      == HUNTED_ISME)
-  {
-    send_reply(sptr, RPL_VERSION, version, cvs_version, debugmode, cli_name(&me),
-	       debug_serveropts());
-#ifdef USE_SSL
-#ifdef DEBUGMODE
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Headers: %s", sptr, OPENSSL_VERSION_TEXT);
-#endif
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Library: %s", sptr, SSLeay_version(SSLEAY_VERSION));
-#endif
-#ifdef USE_GEOIP
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :GeoIP %s", sptr, geoip_version());
-#endif
-#ifdef USE_MMDB
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :MaxMindDB %s", sptr, geoip_libmmdb_version());
-#endif
-    send_supported(sptr);
-  }
-
-  return 0;
-}
-
-/*
- * ms_version - server message handler
- *
- *   parv[0] = sender prefix
- *   parv[1] = servername
- */
-int ms_version(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
-{
-  struct Client *acptr;
-
-  if (MyConnect(sptr) && parc > 1)
-  {
-    if (!(acptr = find_match_server(parv[1])))
-    {
-      send_reply(sptr, ERR_NOSUCHSERVER, parv[1]);
-      return 0;
-    }
-    parv[1] = cli_name(acptr);
-  }
-
-  if (hunt_server_cmd(sptr, CMD_VERSION, cptr, 0, ":%C", 1, parc, parv) ==
-      HUNTED_ISME)
-  {
-    send_reply(sptr, RPL_VERSION, version, cvs_version, debugmode, cli_name(&me),
-	       debug_serveropts());
+  } else {
+    sendcmdto_serv_butone(sptr, CMD_TEMPSHUN, cptr, "%c %C :%s",
+                          (remove ? '-' : '+'), acptr, reason);
   }
 
   return 0;

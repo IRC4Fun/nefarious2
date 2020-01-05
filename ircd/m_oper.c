@@ -156,6 +156,11 @@ void do_oper(struct Client* cptr, struct Client* sptr, struct ConfItem* aconf)
     cli_max_recvq(sptr) = 0; /* Get the recvq from the oper's class */
     cli_lag_min(sptr) = -2; /* Get the fake lag minimum from the oper's class */
     cli_lag_factor(sptr) = -2; /* Get the fake lag factor from the oper's class */
+
+    if (cli_user(sptr)->opername)
+      MyFree(cli_user(sptr)->opername);
+    DupString(cli_user(sptr)->opername, aconf->name);
+
     send_umode_out(sptr, sptr, &old_mode, HasPriv(sptr, PRIV_PROPAGATE));
   } else {
     client_send_privs(&me, sptr, sptr);
@@ -227,10 +232,17 @@ void do_oper(struct Client* cptr, struct Client* sptr, struct ConfItem* aconf)
     }
   }
 
+  if (!EmptyString(aconf->swhois))
+  {
+    ircd_strncpy(cli_user(sptr)->swhois, aconf->swhois, BUFSIZE);
+    sendcmdto_serv_butone(&me, CMD_SWHOIS, NULL, "%C :%s", sptr, aconf->swhois);
+  }
+
   sendto_opmask_butone_global((MyUser(sptr) ? &me : NULL), SNO_OLDSNO,
-     "%s (%s@%s) is now operator (%c)",
+     "%s (%s@%s) is now a %s operator (%c)",
      cli_name(sptr), cli_user(sptr)->username, cli_user(sptr)->realhost,
-     IsOper(sptr) ? 'O' : 'o');
+     HasPriv(sptr, PRIV_PROPAGATE) ? "global" : "local",
+     HasPriv(sptr, PRIV_PROPAGATE) ? 'O' : 'o');
 
   if (feature_bool(FEAT_OPERMOTD))
     m_opermotd(sptr, sptr, 1, parv);
@@ -332,6 +344,8 @@ int m_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       parv[2] = parv[3];
     } else {
       sendcmdto_one(sptr, CMD_OPER, srv, "%C %s %s", srv, parv[2], parv[3]);
+      SetOperedRemote(sptr);
+      ClearOperedLocal(sptr);
       return 0;
     }
   }
@@ -342,8 +356,11 @@ int m_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   if (EmptyString(name) || EmptyString(password))
     return need_more_params(sptr, "OPER");
 
-  if (can_oper(cptr, sptr, name, password, &aconf))
+  if (can_oper(cptr, sptr, name, password, &aconf)) {
     do_oper(cptr, sptr, aconf);
+    SetOperedLocal(sptr);
+    ClearOperedRemote(sptr);
+  }
 
   return 0;
 }

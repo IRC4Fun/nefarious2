@@ -124,6 +124,8 @@ void free_user(struct User* user)
   if (--user->refcnt == 0) {
     if (user->away)
       MyFree(user->away);
+    if (user->opername)
+      MyFree(user->opername);
     /*
      * sanity check
      */
@@ -365,6 +367,7 @@ int register_user(struct Client *cptr, struct Client *sptr)
   struct Shun*     ashun = NULL;
   int              res = 0;
   struct SHostConf* sconf = NULL;
+  struct Channel*  chptr;
 
   user->last = CurrentTime;
   parv[0] = cli_name(sptr);
@@ -560,8 +563,24 @@ int register_user(struct Client *cptr, struct Client *sptr)
     if (cli_sslclifp(sptr) && !EmptyString(cli_sslclifp(sptr)))
       sendcmdto_serv_butone(&me, CMD_MARK, cptr, "%s %s :%s", cli_name(cptr), MARK_SSLCLIFP, cli_sslclifp(sptr));
 
-    if (cli_version(sptr) && !EmptyString(cli_version(sptr)))
+    if (cli_version(sptr) && !EmptyString(cli_version(sptr))) {
       sendcmdto_serv_butone(&me, CMD_MARK, cptr, "%s %s :%s", cli_name(cptr), MARK_CVERSION, cli_version(sptr));
+      SetCVersionSent(sptr);
+
+      if (feature_bool(FEAT_CTCP_VERSIONING_CHAN)) {
+        /* Announce to channel. */
+        if ((chptr = FindChannel(feature_str(FEAT_CTCP_VERSIONING_CHANNAME)))) {
+          if (feature_bool(FEAT_CTCP_VERSIONING_USEMSG))
+            sendcmdto_channel_butone(&me, CMD_PRIVATE, chptr, &me, SKIP_DEAF | SKIP_BURST,
+                                     '\0', "%H :%s has version \002%s\002", chptr,
+                                     cli_name(sptr), cli_version(sptr));
+          else
+            sendcmdto_channel_butone(&me, CMD_NOTICE, chptr, &me, SKIP_DEAF | SKIP_BURST,
+                                     '\0', "%H :%s has version \002%s\002", chptr,
+                                     cli_name(sptr), cli_version(sptr));
+        }
+      }
+    }
 
     if (cli_killmark(sptr) && !EmptyString(cli_killmark(sptr)))
       sendcmdto_serv_butone(&me, CMD_MARK, cptr, "%s %s :%s", cli_name(cptr), MARK_KILL, cli_killmark(sptr));
@@ -569,9 +588,9 @@ int register_user(struct Client *cptr, struct Client *sptr)
     if (IsGeoIP(sptr)) {
       if (cli_countrycode(sptr) && !EmptyString(cli_countrycode(sptr)) &&
           cli_continentcode(sptr) && !EmptyString(cli_continentcode(sptr)))
-        sendcmdto_serv_butone(&me, CMD_MARK, cptr, "%s %s %s %s",
+        sendcmdto_serv_butone(&me, CMD_MARK, cptr, "%s %s %s %s :%s",
                       cli_name(sptr), MARK_GEOIP, cli_countrycode(sptr),
-                      cli_continentcode(sptr));
+                      cli_continentcode(sptr), cli_countryname(sptr));
     }
 
     /* To avoid sending +r to the client due to auth-on-connect, set
@@ -664,7 +683,7 @@ static const struct UserMode {
   { FLAG_CHSERV,       'k' },
   { FLAG_DEBUG,        'g' },
   { FLAG_HIDDENHOST,   'x' },
-  { FLAG_NOCHAN,       'n' },
+  { FLAG_NOCHAN,       'p' },
   { FLAG_COMMONCHANSONLY, 'q' },
   { FLAG_BOT,          'B' },
   { FLAG_PRIVDEAF,     'D' },
@@ -1463,6 +1482,8 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
           ClrFlag(acptr, FLAG_OPER);
           ClrFlag(acptr, FLAG_LOCOP);
           ClrFlag(acptr, FLAG_ADMIN);
+          ClrFlag(acptr, FLAG_OPERED_LOCAL);
+          ClrFlag(acptr, FLAG_OPERED_REMOTE);
           if (MyConnect(acptr))
           {
             tmpmask = cli_snomask(acptr) & ~SNO_OPER;
@@ -1475,9 +1496,11 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         if (what == MODE_ADD)
           SetLocOp(acptr);
         else
-        { 
+        {
           ClrFlag(acptr, FLAG_OPER);
           ClrFlag(acptr, FLAG_LOCOP);
+          ClrFlag(acptr, FLAG_OPERED_LOCAL);
+          ClrFlag(acptr, FLAG_OPERED_REMOTE);
           if (MyConnect(acptr))
           {
             tmpmask = cli_snomask(acptr) & ~SNO_OPER;
@@ -1528,7 +1551,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         else
           ClearNoIdle(acptr);
         break;
-      case 'n':
+      case 'p':
         if (what == MODE_ADD)
           SetNoChan(acptr);
         else
@@ -1667,8 +1690,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
      * new umode; servers can set it, local users cannot;
      * prevents users from /kick'ing or /mode -o'ing
      */
-    if (!FlagHas(&setflags, FLAG_CHSERV) && IsChannelService(acptr) &&
-        !HasPriv(acptr, PRIV_SERVICE))
+    if (!HasPriv(acptr, PRIV_SERVICE) && IsChannelService(acptr))
       ClearChannelService(acptr);
     /*
      * only send wallops to opers
@@ -1690,7 +1712,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
       ClearWhoisNotice(acptr);
     if (!(feature_bool(FEAT_OPER_HIDE) && HasPriv(acptr, PRIV_HIDE_OPER)) && IsHideOper(acptr))
       ClearHideOper(acptr);
-    if (!HasPriv(acptr, PRIV_HIDE_CHANNELS) && IsNoChan(acptr))
+    if (!feature_bool(FEAT_DERESTRICT_HIDECHANS) && !HasPriv(acptr, PRIV_HIDE_CHANNELS) && IsNoChan(acptr))
       ClearNoChan(acptr);
     if (!HasPriv(acptr, PRIV_HIDE_IDLE) && IsNoIdle(acptr))
       ClearNoIdle(acptr);
