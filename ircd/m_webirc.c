@@ -84,6 +84,7 @@
 #include "client.h"
 #include "hash.h"
 #include "ircd.h"
+#include "ircd_alloc.h"
 #include "ircd_features.h"
 #include "ircd_geoip.h"
 #include "ircd_log.h"
@@ -94,6 +95,7 @@
 #include "send.h"
 #include "s_auth.h"
 #include "s_conf.h"
+#include "s_debug.h"
 #include "s_misc.h"
 #include "IPcheck.h"
 
@@ -115,6 +117,11 @@ int m_webirc(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   char* hostname = NULL;
   char* ipaddr = NULL;
   char* password = NULL;
+  char* options = NULL;
+  char* optsdup = NULL;
+  char* opt = NULL;
+  char* optval = NULL;
+  char *p = NULL;
   int res = 0;
   int ares = 0;
   struct WebIRCConf *wline;
@@ -137,6 +144,8 @@ int m_webirc(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     hostname = parv[3];
   if (!EmptyString(parv[4]))
     ipaddr = parv[4];
+  if ((parc > 5) && !EmptyString(parv[5]))
+    options = parv[5];
 
   /* And to be extra sure... (should never occur) */
   if (!password || !username || !hostname || !ipaddr) {
@@ -150,7 +159,7 @@ int m_webirc(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   ares = -1;
   if (res && cli_auth(cptr))
-      ares = auth_set_webirc(cli_auth(cptr), password, username, hostname, ipaddr);
+      ares = auth_set_webirc(cli_auth(cptr), password, username, hostname, ipaddr, options);
 
   if (!ares)
     return 0;
@@ -226,6 +235,48 @@ int m_webirc(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   if (FlagHas(&wline->flags, WFLAG_STRIPSSLFP))
     ircd_strncpy(cli_sslclifp(cptr), "", BUFSIZE + 1);
 
+  if (FlagHas(&wline->flags, WFLAG_USEOPTIONS)) {
+    /* Remove user mode +z and only add it if "secure" option is supplied. */
+    ClearSSL(sptr);
+
+    if (options != NULL) {
+      DupString(optsdup, options);
+      for (opt = ircd_strtok(&p, optsdup, " "); opt;
+           opt = ircd_strtok(&p, 0, " ")) {
+        optval = strchr(opt, '=');
+        if (optval != NULL)
+          *optval++ = '\0';
+        else
+          optval = "";
+        Debug((DEBUG_DEBUG, "WEBIRC: Found option '%s' with value '%s'", opt, optval));
+
+        /* handle "secure" option */
+        if (!ircd_strcmp(opt, "secure"))
+          SetSSL(sptr);
+        /* handle "local-port" and "remote-port" options */
+        else if (!ircd_strcmp(opt, "local-port") || !ircd_strcmp(opt, "remote-port"))
+          Debug((DEBUG_DEBUG, "WEBIRC: Ignoring option '%s' as we don't use it", opt));
+        /* handle "afternet.org/account" option */
+        else if (!ircd_strcmp(opt, "afternet.org/account")) {
+          if (FlagHas(&wline->flags, WFLAG_TRUSTACCOUNT)) {
+            SetAccount(sptr);
+            ircd_strncpy(cli_user(sptr)->account, optval, ACCOUNTLEN);
+
+            if ((feature_int(FEAT_HOST_HIDING_STYLE) == 1) ||
+                (feature_int(FEAT_HOST_HIDING_STYLE) == 3)) {
+              SetHiddenHost(sptr);
+            }
+          } else
+            Debug((DEBUG_DEBUG, "WEBIRC: Ignoring untrusted %s value '%s'", opt, optval));
+        }
+        /* Log unrecognized options */
+        else
+          Debug((DEBUG_DEBUG, "WEBIRC: Unrecognized option '%s' supplied by client", opt));
+      }
+      MyFree(optsdup);
+    }
+  }
+
   if (!EmptyString(wline->description)) {
     ircd_strncpy(cli_webirc(cptr), wline->description, BUFSIZE);
   }
@@ -236,7 +287,11 @@ int m_webirc(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     SetGotId(cptr);
   }
 
-  auth_set_webirc_trusted(cli_auth(cptr), password, username, hostname, ipaddr);
+  /* Only forward options to iauthd if the authenticated WebIRC block enables options */
+  if (FlagHas(&wline->flags, WFLAG_USEOPTIONS))
+    auth_set_webirc_trusted(cli_auth(cptr), password, username, hostname, ipaddr, options);
+  else
+    auth_set_webirc_trusted(cli_auth(cptr), password, username, hostname, ipaddr, NULL);
 
   return 0;
 }
